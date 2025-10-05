@@ -1,0 +1,16 @@
+[{:full-name "kilogram"
+  :short-name "kg"
+  :unit [[1 0 0 0 0 0 0] 1 0 true]
+  :tags [:all]},
+ {:full-name "meter"
+  :short-name "m"
+  :unit [[0 1 0 0 0 0 0] 1 0 true]
+  :tags [:all]},
+ {:full-name "millimeter"
+  :short-name "mm"
+  :unit [[0 1 0 0 0 0 0] 0.001 0 true]
+  :tags [:all]}
+ {:full-name "torque"
+  :short-name "Nm"
+  :unit [[1 1 0 0 0 0 0] 1 0 false]
+  :tags [:mechanical]}]
