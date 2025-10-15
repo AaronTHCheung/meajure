@@ -66,30 +66,35 @@
    '< <
    '> >})
 
+(let [[operator & operands] [1 2 3]]
+  (prn operator operands))
+
 (defn eval-quantified-form
   [form]
   (cond
-    (list? form) (if-let [operator ((first form) quantified-form-operation-sym->fn)]
-                   (let [operands (rest form)
-                         result-unit (condp = operator
-                                       * (apply u/mult (map :unit operands))
-                                       / (apply u/div (map :unit operands))
-                                       (let [first-unit (:unit (first operands))]
-                                         (if (every? #(u/dim-eq first-unit
-                                                                (:unit %))
-                                                     operands)
-                                           first-unit
-                                           (throw (ex-info "Incompatible dimensions in form"
-                                                           {:form form})))))
-                         scaling-factors (map #(/ (u/slope result-unit)
-                                                  (u/slope (:unit %)))
-                                              operands)
-                         result-unit-measured-values (map #(/ (:value %1) %2)
-                                                          operands
-                                                          scaling-factors)
-                         result-value (apply operator result-unit-measured-values)]
-                     (->Quantity "unresolved" "unresolved" result-unit result-value [] nil))
-                   form)
+    (list? form) (let [[operator & operands] form]
+                   (if-let [operator (operator quantified-form-operation-sym->fn)]
+                     (let [result-unit (condp = operator
+                                         * (apply u/mult (map :unit operands))
+                                         / (apply u/div (map :unit operands))
+                                         (let [first-unit (:unit (first operands))]
+                                           (if (every? #(u/dim-eq first-unit
+                                                                  (:unit %))
+                                                       operands)
+                                             first-unit
+                                             (throw (ex-info "Incompatible dimensions in form"
+                                                             {:form form})))))
+                           scaling-factors (map (fn [operand]
+                                                  "Determine the scaling factor to be multiplied to the each operand"
+                                                  (/ (u/slope result-unit)
+                                                     (u/slope (:unit operand))))
+                                                operands)
+                           result-unit-measured-values (map #(* (:value %1) %2)
+                                                            operands
+                                                            scaling-factors)
+                           result-value (apply operator result-unit-measured-values)]
+                       (->Quantity "unresolved" "unresolved" result-unit result-value [] nil))
+                     form))
     :else form))
 
 (defn eval-form
@@ -99,8 +104,16 @@
 
 (comment
   "Testing eval-form"
+  (eval-form '(/ 1 (* :mm 4) ))
+  (eval-form '(/ 1 (* :mm 4)))
+  (eval-form '(/ (* :kg 2) (* :mm 4)))
+  (eval-form '(/ :mm 4))
+  (eval-form '(/ 4 :mm))
+  (eval-form '(/ (* :kg 2) (/ :mm 4)))
+  (eval-form '(* (/ 2 3) 8))
   (eval-form '(/ (* (* :kg 1.5) (* 2 :kg)) (* :mm 2))))
 
+(w/postwalk convert-to-quantity '(* :mm 5))
 
 (defn unit-eq
   "
