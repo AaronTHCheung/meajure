@@ -66,9 +66,6 @@
    '< <
    '> >})
 
-(let [[operator & operands] [1 2 3]]
-  (prn operator operands))
-
 (defn eval-quantified-form
   [form]
   (cond
