@@ -34,12 +34,14 @@
 
   (defn load-unitdef-edn
     [filepath]
+    "Side-effect function of loading unit definitions in the EDN file at filepath to the unit registry"
     (let [unit-defs (edn/read-string (slurp filepath))]
       "Need to use dorun/doall/doseq to consume the lazy sequence created by for/map"
-      (doall (map load-unitdefrecord unit-defs))))
+      (mapv load-unitdefrecord unit-defs))))
 
-  (load-unitdef-edn "unitdef.edn")
-  )
+(comment
+  "Load local unit definition file for development"
+  (load-unitdef-edn "unitdef.edn"))
 
 (defn number->unitless-number
   [x]
@@ -64,8 +66,9 @@
    '<= <=
    '>= >=
    '< <
-   '> >})
-
+   '> >
+   '= =
+   '!= not=})
 
 (defn eval-quantified-form
   [form]
@@ -82,15 +85,9 @@
                                              first-unit
                                              (throw (ex-info "Incompatible dimensions in form"
                                                              {:form form})))))
-                           scaling-factors (map (fn [operand]
-                                                  "Determine the scaling factor to be multiplied to the each operand"
-                                                  (/ (u/slope (:unit operand))
-                                                     (u/slope result-unit)))
-                                                operands)
-                           result-unit-measured-values (map #(* (:value %1) %2)
-                                                            operands
-                                                            scaling-factors)
-                           result-value (apply operator result-unit-measured-values)]
+                           result-value (->> operands
+                                             (map :value)
+                                             (apply operator))]
                        (->Quantity "unresolved" "unresolved" result-unit result-value [] nil))
                      form))
     :else form))
@@ -102,7 +99,7 @@
 
 (comment
   "Testing eval-form"
-  (eval-form '(/ 1 (* :mm 4) ))
+  (eval-form '(= (* :mm 8) (* 2 (* :mm 4))))
   (eval-form '(/ 1 (* :mm 4)))
   (eval-form '(/ (* :kg 2) (* :mm 4)))
   (eval-form '(/ :mm 4))
@@ -110,8 +107,6 @@
   (eval-form '(/ (* :kg 2) (/ :mm 4)))
   (eval-form '(* (/ 2 3) 8))
   (eval-form '(/ (* (* :kg 1.5) (* 2 :kg)) (* :mm 2))))
-
-(w/postwalk convert-to-quantity '(* :mm 5))
 
 (defn unit-eq
   "
