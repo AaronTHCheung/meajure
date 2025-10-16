@@ -38,7 +38,7 @@
       "Need to use dorun/doall/doseq to consume the lazy sequence created by for/map"
       (doall (map load-unitdefrecord unit-defs))))
 
-  ;; (load-unitdef-edn "unitdef.edn")
+  (load-unitdef-edn "unitdef.edn")
   )
 
 (defn number->unitless-number
@@ -66,6 +66,7 @@
    '< <
    '> >})
 
+
 (defn eval-quantified-form
   [form]
   (cond
@@ -83,8 +84,8 @@
                                                              {:form form})))))
                            scaling-factors (map (fn [operand]
                                                   "Determine the scaling factor to be multiplied to the each operand"
-                                                  (/ (u/slope result-unit)
-                                                     (u/slope (:unit operand))))
+                                                  (/ (u/slope (:unit operand))
+                                                     (u/slope result-unit)))
                                                 operands)
                            result-unit-measured-values (map #(* (:value %1) %2)
                                                             operands
