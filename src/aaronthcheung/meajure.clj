@@ -36,11 +36,8 @@
     [filepath]
     "Side-effect function of loading unit definitions in the EDN file at filepath to the unit registry"
     (let [unit-defs (edn/read-string (slurp filepath))]
+      "Need to use dorun/doall/doseq to consume the lazy sequence created by for/map"
       (mapv load-unitdefrecord unit-defs))))
-
-(comment
-  "Load local unit definition file for development"
-  (load-unitdef-edn "unitdef.edn"))
 
 (defn number->unitless-number
   [x]
@@ -61,34 +58,51 @@
   {'+ +
    '- -
    '* *
-   '/ /
-   '<= <=
+   '/ /})
+
+(def quantified-form-comparison-sym->fn
+  {'<= <=
    '>= >=
    '< <
    '> >
-   '= =
+   '= ==
    '!= not=})
 
 (defn eval-quantified-form
   [form]
   (cond
     (list? form) (let [[operator & operands] form]
-                   (if-let [operator (operator quantified-form-operation-sym->fn)]
-                     (let [result-unit (condp = operator
-                                         * (apply u/mult (map :unit operands))
-                                         / (apply u/div (map :unit operands))
-                                         (let [first-unit (:unit (first operands))]
-                                           (if (every? #(u/dim-eq first-unit
-                                                                  (:unit %))
-                                                       operands)
-                                             first-unit
-                                             (throw (ex-info "Incompatible dimensions in form"
-                                                             {:form form})))))
-                           result-value (->> operands
-                                             (map :value)
-                                             (apply operator))]
-                       (->Quantity "unresolved" "unresolved" result-unit result-value [] nil))
-                     form))
+                   (cond
+                     (get quantified-form-operation-sym->fn operator) (let [operator (get quantified-form-operation-sym->fn operator)
+                                                                            result-unit (condp = operator
+                                                                                          * (apply u/mult (map :unit operands))
+                                                                                          / (apply u/div (map :unit operands))
+                                                                                          (let [first-unit (:unit (first operands))]
+                                                                                            (if (every? #(u/dim-eq first-unit
+                                                                                                                   (:unit %))
+                                                                                                        operands)
+                                                                                              first-unit
+                                                                                              (throw (ex-info "Incompatible dimensions in form"
+                                                                                                              {:form form})))))
+                                                                            result-value (->> operands
+                                                                                              (map :value)
+                                                                                              (apply operator))]
+                                                                        (->Quantity "unresolved" "unresolved" result-unit result-value [] nil))
+                     (get quantified-form-comparison-sym->fn operator) (let [operator (get quantified-form-comparison-sym->fn operator)]
+                                                                         (if (every? #(u/dim-eq (-> operands
+                                                                                                    first
+                                                                                                    :unit)
+                                                                                                (:unit %))
+                                                                                     (rest operands))
+                                                                           (apply operator (map #(* (-> %
+                                                                                                        :unit
+                                                                                                        u/slope)
+                                                                                                    (-> %
+                                                                                                        :value))
+                                                                                                operands))
+                                                                           (throw (ex-info "Incompatible dimensions in form"
+                                                                                           {:form form}))))
+                     :else form))
     :else form))
 
 (defn eval-form
@@ -97,6 +111,11 @@
     (w/postwalk eval-quantified-form quantified-form)))
 
 (comment
+  "TODO: put testing in test-scripts to clean up the code"
+
+  "Load local unit definition file for development"
+  (load-unitdef-edn "unitdef.edn")
+
   "Testing eval-form"
   (eval-form '(= (* :mm 8) (* 2 (* :mm 4))))
   (eval-form '(/ 1 (* :mm 4)))
@@ -105,7 +124,11 @@
   (eval-form '(/ 4 :mm))
   (eval-form '(/ (* :kg 2) (/ :mm 4)))
   (eval-form '(* (/ 2 3) 8))
-  (eval-form '(/ (* (* :kg 1.5) (* 2 :kg)) (* :mm 2))))
+  (eval-form '(/ (* (* :kg 1.5) (* 2 :kg)) (* :mm 2)))
+  (eval-form '(= (* :mm 5000) (* :m 5)))
+  (eval-form '(>= (* :mm 5000) (* :m 5)))
+  (eval-form '(< (* :mm 5000) (* :m 5)))
+  (boolean? (eval-form '(< (* :mm 5000) (* :m 5)))))
 
 (defn unit-eq
   "
@@ -127,6 +150,7 @@
      Resolve a unresolved quantity by finding a unit quantity in the registry that has matching dimension and slope.
      If multiple unit quantities are matched in the registry, the match highest in place in the unit-quantity-registry will be used to resolve the quantity.
      If no suitable unit quantity registry is found in the registry, return nil
+     If the 'quantity' is a boolean, return the boolean
      
      If tags are provided, additional filter and sorting will be performed before the final matching.
      - Additional filter: only the unit quantites with tag :all, or with one tag in the provided tags will be matched
@@ -137,30 +161,37 @@
        3) higher in place in the unit-quantity-registry?
      "
   ([quantity & tags]
-   (let [n (count @unit-quantity-registry)
-         candidate-registry (filter #(unit-eq (:unit quantity)
-                                              (:unit %))
-                                    (vals @unit-quantity-registry))
-         tags-set (set tags)
-         matching-tags-set (union tags-set #{:all})
-         matched-registry (filter #(some matching-tags-set (:tags %))
-                                  candidate-registry)
-         matched-rank (map #(- (:insertion-order %)
-                               (if (some tags-set (:tags %)) n 0))
-                           matched-registry)
-         matched-unit-quantity (->> matched-rank
-                                    (map-indexed vector)
-                                    (sort-by second)
-                                    (map first)
-                                    (map #(nth matched-registry %))
-                                    first)]
-     (if matched-unit-quantity
-       (assoc matched-unit-quantity :value (:value quantity))
-       nil))))
+   (if (boolean? quantity)
+     quantity
+     (let [n (count @unit-quantity-registry)
+           candidate-registry (filter #(unit-eq (:unit quantity)
+                                                (:unit %))
+                                      (vals @unit-quantity-registry))
+           tags-set (set tags)
+           matching-tags-set (union tags-set #{:all})
+           matched-registry (filter #(some matching-tags-set (:tags %))
+                                    candidate-registry)
+           matched-rank (map #(- (:insertion-order %)
+                                 (if (some tags-set (:tags %)) n 0))
+                             matched-registry)
+           matched-unit-quantity (->> matched-rank
+                                      (map-indexed vector)
+                                      (sort-by second)
+                                      (map first)
+                                      (map #(nth matched-registry %))
+                                      first)]
+       (if matched-unit-quantity
+         (assoc matched-unit-quantity :value (:value quantity))
+         nil)))))
 
 (comment
   "test resolve-quantity"
   (resolve-quantity {:value 20
                      :unit [[1 1 0 0 0 0 0] 1 0 false]
                      :tags [:mechanical]}
-                    :mechanical))
+                    :mechanical)
+  (resolve-quantity (eval-form '(> (* :mm 4999) (* :m 5))))
+  (resolve-quantity (eval-form '(> (* :mm 5001) (* :m 5))))
+  (resolve-quantity (eval-form '(= (* :mm 5000) (* :m 5))))
+  (resolve-quantity (eval-form '(!= (* :mm 5050) (* :m 5)))))
+
