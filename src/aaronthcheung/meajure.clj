@@ -36,7 +36,6 @@
     [filepath]
     "Side-effect function of loading unit definitions in the EDN file at filepath to the unit registry"
     (let [unit-defs (edn/read-string (slurp filepath))]
-      "Need to use dorun/doall/doseq to consume the lazy sequence created by for/map"
       (mapv load-unitdefrecord unit-defs))))
 
 (comment
