@@ -1,6 +1,10 @@
 [{:full-name "kilogram"
   :short-name "kg"
   :unit [[1 0 0 0 0 0 0] 1 0 true]
+  :tags [:all]}
+ {:full-name "gram"
+  :short-name "g"
+  :unit [[1 0 0 0 0 0 0] 0.001 0 true]
   :tags [:all]},
  {:full-name "meter"
   :short-name "m"

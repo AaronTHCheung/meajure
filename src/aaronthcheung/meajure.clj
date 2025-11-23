@@ -36,7 +36,6 @@
     [filepath]
     "Side-effect function of loading unit definitions in the EDN file at filepath to the unit registry"
     (let [unit-defs (edn/read-string (slurp filepath))]
-      "Need to use dorun/doall/doseq to consume the lazy sequence created by for/map"
       (mapv load-unitdefrecord unit-defs))))
 
 (defn number->unitless-number
@@ -68,6 +67,17 @@
    '= ==
    '!= not=})
 
+(def aggregate-form-operation-sym->fn
+  {'and (fn and*
+          [& args]
+          (reduce (fn [x y] (and x y))
+                  args))
+   'or (fn or
+         [& args]
+         (reduce (fn [x y] (or x y))
+                 args))
+   'not not})
+
 (defn eval-quantified-form
   [form]
   (cond
@@ -84,6 +94,14 @@
                                                                                               first-unit
                                                                                               (throw (ex-info "Incompatible dimensions in form"
                                                                                                               {:form form})))))
+                                                                            operands (if (some #(= % operator) [+ -])
+                                                                                       (map #(assoc % 
+                                                                                                    :value 
+                                                                                                    (u/convert (:value %)
+                                                                                                               (:unit %)
+                                                                                                               result-unit))
+                                                                                            operands)
+                                                                                       operands)
                                                                             result-value (->> operands
                                                                                               (map :value)
                                                                                               (apply operator))]
@@ -102,33 +120,15 @@
                                                                                                 operands))
                                                                            (throw (ex-info "Incompatible dimensions in form"
                                                                                            {:form form}))))
+                     (get aggregate-form-operation-sym->fn operator) form ; TODO
                      :else form))
     :else form))
 
 (defn eval-form
+  "Evaluate a mathematical expression in list form to a Quantity or boolean"
   [form]
   (let [quantified-form (w/postwalk convert-to-quantity form)]
     (w/postwalk eval-quantified-form quantified-form)))
-
-(comment
-  "TODO: put testing in test-scripts to clean up the code"
-
-  "Load local unit definition file for development"
-  (load-unitdef-edn "unitdef.edn")
-
-  "Testing eval-form"
-  (eval-form '(= (* :mm 8) (* 2 (* :mm 4))))
-  (eval-form '(/ 1 (* :mm 4)))
-  (eval-form '(/ (* :kg 2) (* :mm 4)))
-  (eval-form '(/ :mm 4))
-  (eval-form '(/ 4 :mm))
-  (eval-form '(/ (* :kg 2) (/ :mm 4)))
-  (eval-form '(* (/ 2 3) 8))
-  (eval-form '(/ (* (* :kg 1.5) (* 2 :kg)) (* :mm 2)))
-  (eval-form '(= (* :mm 5000) (* :m 5)))
-  (eval-form '(>= (* :mm 5000) (* :m 5)))
-  (eval-form '(< (* :mm 5000) (* :m 5)))
-  (boolean? (eval-form '(< (* :mm 5000) (* :m 5)))))
 
 (defn unit-eq
   "
@@ -184,14 +184,57 @@
          (assoc matched-unit-quantity :value (:value quantity))
          nil)))))
 
-(comment
-  "test resolve-quantity"
-  (resolve-quantity {:value 20
-                     :unit [[1 1 0 0 0 0 0] 1 0 false]
-                     :tags [:mechanical]}
-                    :mechanical)
-  (resolve-quantity (eval-form '(> (* :mm 4999) (* :m 5))))
-  (resolve-quantity (eval-form '(> (* :mm 5001) (* :m 5))))
-  (resolve-quantity (eval-form '(= (* :mm 5000) (* :m 5))))
-  (resolve-quantity (eval-form '(!= (* :mm 5050) (* :m 5)))))
+(defn unit-conversion:Quantity
+  "Perform unit conversion to change a Quantity's :value and :unit in order to match target-unit.
+   If target-unit does not exist in the unit quantity registry or a non-Quantity is provided, return nil.
+   If the target-unit is not compatible with the quantity, throw an exception.
+   Return the converted as a Quantity"
+  [^Quantity quantity ^clojure.lang.Keyword target-unit]
+  (when-let [target-quantity (and (instance? Quantity quantity)
+                                  (target-unit @unit-quantity-registry))]
+    (let [u1 (:unit quantity)
+          u2 (:unit target-quantity)]
+      (assoc target-quantity
+             :value
+             (u/convert (:value quantity)
+                        u1 u2)))))
 
+(defn quantity->canonical-form
+  "Convert a Quantity into the canonical prefix-expression format '(* <unit-keyword> <value>)
+   If the input is not a Quantity, return nil.
+   If the quantity unit is not registered (e.g., unresolved) return nil"
+  [quantity]
+  (when (and (instance? Quantity quantity)
+             ((-> quantity
+                  :short-name
+                  keyword) @unit-quantity-registry))
+    (list '*
+          (-> quantity
+              :short-name
+              keyword)
+          (-> quantity
+              :value))))
+
+(defn unit-conversion:form
+  "Perform unit conversion to change a quantity in the canonical format '(* <unit-keyword> <number-value>) to match target-unit.
+   If target-unit does not exist in the unit quantity registry or the input form is not in the expected format (or the unit in the form not in registry), return nil.
+   If the target-unit is not compatible with the quantity, throw an exception.
+   Return the converted as a canonical form"
+  [^clojure.lang.PersistentList form ^clojure.lang.Keyword target-unit]
+  (when (and (= 3 (count form))
+             (= '* (first form))
+             (@unit-quantity-registry (second form))
+             (number? (second (rest form))))
+    (let [[unit value] (rest form)
+          quantity (assoc (@unit-quantity-registry unit)
+                          :value
+                          value)]
+      (-> quantity
+          (unit-conversion:Quantity target-unit)
+          quantity->canonical-form))))
+
+(defn unit-conversion
+  "General unit conversion of a quantity in the canonical format or Quantity record format format to match the target-unit.
+   If successful, return the converted in the original format. Otherwise, return nil"
+  [source ^clojure.lang.Keyword target-unit]
+  (some #(% source target-unit) [unit-conversion:Quantity unit-conversion:form]))
